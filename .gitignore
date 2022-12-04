@@ -5,3 +5,5 @@ __pycache__/
 *.model
 *.gz
 .vscode/
+
+original_dccae_implementation/
