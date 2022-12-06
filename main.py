@@ -3,8 +3,9 @@ import torch.nn as nn
 import numpy as np
 from linear_cca import linear_cca
 from torch.utils.data import BatchSampler, SequentialSampler, RandomSampler
-from DeepCCAModels import DeepCCA
-from utils import load_data, svm_classify
+from DeepCCAModels import DeepCCA, AutoEncoder, DCCAE
+from utils import load_data, svm_classify, get_args
+import sys
 import time
 import logging
 
@@ -30,6 +31,7 @@ class Solver:
         batch_size,
         learning_rate,
         reg_par,
+        dccae,
         device=torch.device("cpu"),
     ):
         self.model = nn.DataParallel(model)
@@ -41,6 +43,8 @@ class Solver:
             self.model.parameters(), lr=learning_rate, weight_decay=reg_par
         )
         self.device = device
+
+        self.dccae = dccae
 
         self.linear_cca = linear_cca
 
@@ -102,8 +106,11 @@ class Solver:
                 self.optimizer.zero_grad()
                 batch_x1 = x1[batch_idx, :]
                 batch_x2 = x2[batch_idx, :]
-                o1, o2 = self.model(batch_x1, batch_x2)
-                loss = self.loss(o1, o2)
+                #! changed here to fit to DCCAE
+                # o1, o2 = self.model(batch_x1, batch_x2)
+                # loss = self.loss(o1, o2)
+                # train_losses.append(loss.item())
+                loss = self.fit_step(batch_x1, batch_x2)
                 train_losses.append(loss.item())
                 loss.backward()
                 self.optimizer.step()
@@ -137,8 +144,11 @@ class Solver:
             )
         # train_linear_cca
         if self.linear_cca is not None:
-            _, outputs = self._get_outputs(x1, x2)
-            self.train_linear_cca(outputs[0], outputs[1])
+            if args.dccae:
+                _, dcca_outputs, ae_outputs = self._get_outputs(x1, x2)
+            else:
+                _, dcca_outputs = self._get_outputs(x1, x2)
+            self.train_linear_cca(dcca_outputs[0], dcca_outputs[1])
 
         checkpoint_ = torch.load(checkpoint)
         self.model.load_state_dict(checkpoint_)
@@ -150,14 +160,26 @@ class Solver:
             loss = self.test(tx1, tx2)
             self.logger.info("loss on test data: {:.4f}".format(loss))
 
+    def fit_step(self, batch_x1, batch_x2):
+        if self.dccae:
+            dcca_out1, dcca_out2, ae_out1, ae_out2 = self.model(batch_x1, batch_x2)
+            loss = self.loss(dcca_out1, dcca_out2, ae_out1, ae_out2, batch_x1, batch_x2)
+        else:
+            o1, o2 = self.model(batch_x1, batch_x2)
+            loss = self.loss(o1, o2)
+        return loss
+
     def test(self, x1, x2, use_linear_cca=False):
         with torch.no_grad():
-            losses, outputs = self._get_outputs(x1, x2)
+            if self.dccae:
+                losses, dcca_outputs, ae_outputs = self._get_outputs(x1, x2)
+            else:
+                losses, dcca_outputs = self._get_outputs(x1, x2)
 
             if use_linear_cca:
                 print("Linear CCA started!")
-                outputs = self.linear_cca.test(outputs[0], outputs[1])
-                return np.mean(losses), outputs
+                dcca_outputs = self.linear_cca.test(dcca_outputs[0], dcca_outputs[1])
+                return np.mean(losses), dcca_outputs
             else:
                 return np.mean(losses)
 
@@ -181,21 +203,50 @@ class Solver:
             for batch_idx in batch_idxs:
                 batch_x1 = x1[batch_idx, :]
                 batch_x2 = x2[batch_idx, :]
-                o1, o2 = self.model(batch_x1, batch_x2)
-                outputs1.append(o1)
-                outputs2.append(o2)
-                loss = self.loss(o1, o2)
-                losses.append(loss.item())
-        outputs = [
-            torch.cat(outputs1, dim=0).cpu().numpy(),
-            torch.cat(outputs2, dim=0).cpu().numpy(),
-        ]
-        return losses, outputs
+                self._get_outputs_step(losses, outputs1, outputs2, batch_x1, batch_x2)
+        if self.dccae:
+            dcca_outputs, ae_outputs = self.concat_outputs(outputs1, outputs2)
+            return losses, dcca_outputs, ae_outputs
+        else:
+            outputs = self.concat_outputs(outputs1, outputs2)
+            return losses, outputs
+
+    def concat_outputs(self, outputs1, outputs2):
+        if self.dccae:
+            dcca_outputs = [
+                torch.cat([x[:][0] for x in outputs1], dim=0).cpu().numpy(),
+                torch.cat([x[:][0] for x in outputs2], dim=0).cpu().numpy(),
+            ]
+            ae_outputs = [
+                torch.cat([x[:][1] for x in outputs1], dim=0).cpu().numpy(),
+                torch.cat([x[:][1] for x in outputs2], dim=0).cpu().numpy(),
+            ]
+            return dcca_outputs, ae_outputs
+        else:
+            outputs = [
+                torch.cat(outputs1, dim=0).cpu().numpy(),
+                torch.cat(outputs2, dim=0).cpu().numpy(),
+            ]
+            return outputs
+
+    def _get_outputs_step(self, losses, outputs1, outputs2, batch_x1, batch_x2):
+        if self.dccae:
+            dcca_out1, dcca_out2, ae_out1, ae_out2 = self.model(batch_x1, batch_x2)
+            outputs1.append((dcca_out1, ae_out1))
+            outputs2.append((dcca_out2, ae_out2))
+            loss = self.loss(dcca_out1, dcca_out2, ae_out1, ae_out2, batch_x1, batch_x2)
+        else:
+            o1, o2 = self.model(batch_x1, batch_x2)
+            outputs1.append(o1)
+            outputs2.append(o2)
+            loss = self.loss(o1, o2)
+        losses.append(loss.item())
 
 
 if __name__ == "__main__":
     ############
     # Parameters Section
+    args = get_args(sys.argv[1:])
 
     device = torch.device("cpu")
     print("Using", torch.cuda.device_count(), "GPUs")
@@ -239,7 +290,7 @@ if __name__ == "__main__":
     data1 = load_data("./noisymnist_view1.gz")
     data2 = load_data("./noisymnist_view2.gz")
     # Building, training, and producing the new features by DCCA
-    model = DeepCCA(
+    dcca_model = DeepCCA(
         layer_sizes1,
         layer_sizes2,
         input_shape1,
@@ -251,6 +302,13 @@ if __name__ == "__main__":
     l_cca = None
     if apply_linear_cca:
         l_cca = linear_cca()
+
+    #! Testing DCCAE
+    autoencoder = AutoEncoder(4, 1024, 10, 784)
+    dccae_model = DCCAE(dcca_model, autoencoder)
+
+    model = dccae_model if args.dccae else dcca_model
+
     solver = Solver(
         model,
         l_cca,
@@ -259,6 +317,7 @@ if __name__ == "__main__":
         batch_size,
         learning_rate,
         reg_par,
+        args.dccae,
         device=device,
     )
     train1, train2 = data1[0][0], data2[0][0]
@@ -293,6 +352,7 @@ if __name__ == "__main__":
     [test_acc, valid_acc] = svm_classify(new_data, C=0.01)
     print("Accuracy on view 1 (validation data) is:", valid_acc * 100.0)
     print("Accuracy on view 1 (test data) is:", test_acc * 100.0)
+
     # Saving new features in a gzip pickled file specified by save_to
     print("saving new features ...")
     f1 = gzip.open(save_to, "wb")

@@ -1,3 +1,4 @@
+import argparse
 import gzip
 from sklearn import svm
 from sklearn.metrics import accuracy_score
@@ -7,8 +8,8 @@ import torch
 
 def load_data(data_file):
     """loads the data from the gzip pickled files, and converts to numpy arrays"""
-    print('loading data ...')
-    f = gzip.open(data_file, 'rb')
+    print("loading data ...")
+    f = gzip.open(data_file, "rb")
     train_set, valid_set, test_set = load_pickle(f)
     f.close()
 
@@ -16,14 +17,18 @@ def load_data(data_file):
     valid_set_x, valid_set_y = make_tensor(valid_set)
     test_set_x, test_set_y = make_tensor(test_set)
 
-    return [(train_set_x, train_set_y), (valid_set_x, valid_set_y), (test_set_x, test_set_y)]
+    return [
+        (train_set_x, train_set_y),
+        (valid_set_x, valid_set_y),
+        (test_set_x, test_set_y),
+    ]
 
 
 def make_tensor(data_xy):
     """converts the input to numpy arrays"""
     data_x, data_y = data_xy
     data_x = torch.tensor(data_x)
-    data_y = np.asarray(data_y, dtype='int32')
+    data_y = np.asarray(data_y, dtype="int32")
     return data_x, data_y
 
 
@@ -36,7 +41,7 @@ def svm_classify(data, C):
     valid_data, _, valid_label = data[1]
     test_data, _, test_label = data[2]
 
-    print('training SVM...')
+    print("training SVM...")
     clf = svm.LinearSVC(C=C, dual=False)
     clf.fit(train_data, train_label.ravel())
 
@@ -59,8 +64,14 @@ def load_pickle(f):
         import _pickle as thepickle
 
     try:
-        ret = thepickle.load(f, encoding='latin1')
+        ret = thepickle.load(f, encoding="latin1")
     except TypeError:
         ret = thepickle.load(f)
 
     return ret
+
+
+def get_args(args):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dccae", action="store_true")
+    return parser.parse_args(args)
