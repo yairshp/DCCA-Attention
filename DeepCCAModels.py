@@ -51,6 +51,7 @@ class DeepCCA(nn.Module):
         self.model2 = MlpNet(layer_sizes2, input_size2).double()
 
         self.loss = cca_loss(outdim_size, use_all_singular_values, device).loss
+        self.output_size = outdim_size
 
     def forward(self, x1, x2):
         """
@@ -92,13 +93,47 @@ class DCCAE(nn.Module):
         self.deep_cca_model = deep_cca_model
         self.autoencoder = autoencoder
 
+        self.W1 = nn.Parameter(
+            torch.zeros(
+                self.deep_cca_model.output_size, self.deep_cca_model.output_size
+            )
+        )
+        torch.nn.init.normal_(self.W1)
+        self.W2 = nn.Parameter(
+            torch.zeros(
+                self.deep_cca_model.output_size, self.deep_cca_model.output_size
+            )
+        )
+        torch.nn.init.normal_(self.W2)
+
+        self.tanh = nn.Tanh()
+        self.softmax = nn.Softmax(dim=2)
+
         self.dcca_loss = self.deep_cca_model.loss
         self.ae_loss = nn.functional.mse_loss
 
     def forward(self, x1, x2):
         dcca_out1, dcca_out2 = self.deep_cca_model(x1, x2)
-        ae_out1, ae_out2 = self.autoencoder(dcca_out1), self.autoencoder(dcca_out2)
+        a, b = self.attend(dcca_out1, dcca_out2)
+        a, b = torch.squeeze(a), torch.squeeze(b)
+        # ae_out1, ae_out2 = self.autoencoder(dcca_out1), self.autoencoder(dcca_out2)
+        ae_out1, ae_out2 = self.autoencoder(a), self.autoencoder(b)
         return dcca_out1, dcca_out2, ae_out1, ae_out2
+
+    def attend(self, x1, x2):
+        # x1 = x1.view(-1, 1, self.deep_cca_model.output_size)
+        # x2 = x2.view(-1, 1, self.deep_cca_model.output_size)
+        x1 = torch.unsqueeze(x1, 1)
+        x2 = torch.unsqueeze(x2, 1)
+        w1 = torch.matmul(x2, self.W1)
+        w1 = self.tanh(w1)
+        w1 = self.softmax(w1)
+
+        w2 = torch.matmul(x1, self.W2)
+        w2 = self.tanh(w2)
+        w2 = self.softmax(w2)
+
+        return x1 * w1, x2 * w2
 
     def loss(self, dcca_out1, dcca_out2, ae_out1, ae_out2, y1, y2):
         dcca_loss = self.deep_cca_model.loss(dcca_out1, dcca_out2)
