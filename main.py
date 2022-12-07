@@ -179,7 +179,10 @@ class Solver:
             if use_linear_cca:
                 print("Linear CCA started!")
                 dcca_outputs = self.linear_cca.test(dcca_outputs[0], dcca_outputs[1])
-                return np.mean(losses), dcca_outputs
+                if self.dccae:
+                    return np.mean(losses), dcca_outputs, ae_outputs
+                else:
+                    return np.mean(losses), dcca_outputs
             else:
                 return np.mean(losses)
 
@@ -267,7 +270,7 @@ if __name__ == "__main__":
 
     # the parameters for training the network
     learning_rate = 1e-3
-    epoch_num = 1
+    epoch_num = 3
     batch_size = 800
 
     # the regularization parameter of the network
@@ -304,8 +307,9 @@ if __name__ == "__main__":
         l_cca = linear_cca()
 
     #! Testing DCCAE
-    autoencoder = AutoEncoder(4, 1024, 10, 784)
-    dccae_model = DCCAE(dcca_model, autoencoder)
+    autoencoder1 = AutoEncoder(4, 1024, 10, 784)
+    autoencoder2 = AutoEncoder(4, 1024, 10, 784)
+    dccae_model = DCCAE(dcca_model, autoencoder1, autoencoder2)
 
     model = dccae_model if args.dccae else dcca_model
 
@@ -333,11 +337,18 @@ if __name__ == "__main__":
         train1.size(0) + val1.size(0),
         train1.size(0) + val1.size(0) + test1.size(0),
     ]
-    loss, outputs = solver.test(
-        torch.cat([train1, val1, test1], dim=0),
-        torch.cat([train2, val2, test2], dim=0),
-        apply_linear_cca,
-    )
+    if args.dccae:
+        loss, outputs, ae_outputs = solver.test(
+            torch.cat([train1, val1, test1], dim=0),
+            torch.cat([train2, val2, test2], dim=0),
+            apply_linear_cca,
+        )
+    else:
+        loss, outputs = solver.test(
+            torch.cat([train1, val1, test1], dim=0),
+            torch.cat([train2, val2, test2], dim=0),
+            apply_linear_cca,
+        )
     new_data = []
     # print(outputs)
     for idx in range(3):

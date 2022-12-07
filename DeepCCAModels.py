@@ -88,10 +88,11 @@ class AutoEncoder(nn.Module):
 
 
 class DCCAE(nn.Module):
-    def __init__(self, deep_cca_model, autoencoder):
+    def __init__(self, deep_cca_model, autoencoder1, autoencoder2):
         super(DCCAE, self).__init__()
         self.deep_cca_model = deep_cca_model
-        self.autoencoder = autoencoder
+        self.autoencoder1 = autoencoder1
+        self.autoencoder2 = autoencoder2
 
         self.W1 = nn.Parameter(
             torch.zeros(
@@ -117,7 +118,7 @@ class DCCAE(nn.Module):
         a, b = self.attend(dcca_out1, dcca_out2)
         a, b = torch.squeeze(a), torch.squeeze(b)
         # ae_out1, ae_out2 = self.autoencoder(dcca_out1), self.autoencoder(dcca_out2)
-        ae_out1, ae_out2 = self.autoencoder(a), self.autoencoder(b)
+        ae_out1, ae_out2 = self.autoencoder1(a), self.autoencoder2(b)
         return dcca_out1, dcca_out2, ae_out1, ae_out2
 
     def attend(self, x1, x2):

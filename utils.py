@@ -37,9 +37,12 @@ def svm_classify(data, C):
     trains a linear SVM on the data
     input C specifies the penalty factor of SVM
     """
-    train_data, _, train_label = data[0]
-    valid_data, _, valid_label = data[1]
-    test_data, _, test_label = data[2]
+    # train_data, _, train_label = data[0]
+    # valid_data, _, valid_label = data[1]
+    # test_data, _, test_label = data[2]
+    _, train_data, train_label = data[0]
+    _, valid_data, valid_label = data[1]
+    _, test_data, test_label = data[2]
 
     print("training SVM...")
     clf = svm.LinearSVC(C=C, dual=False)
